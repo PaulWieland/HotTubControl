@@ -2,7 +2,8 @@
 Adding ESP8266 Wifi/Thermostat control to my 2000's vintage hot tub
 
 # Direct control over relays
-<img width="828" alt="image" src="https://user-images.githubusercontent.com/4663918/193596733-efc555cb-ad67-44fa-ab7f-3e2e1ffda68c.png">
+<img width="1153" alt="image" src="https://user-images.githubusercontent.com/4663918/193625415-02c86a75-8e09-4e82-b4f1-ae0cdb47564e.png">
+
 
 
 # Control Signal
