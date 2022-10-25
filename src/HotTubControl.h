@@ -7,8 +7,8 @@
 #define STATUS_HEAT1 D0 // pulled low by optocoupler when heat 1 relay energized
 #define STATUS_PUMPLOW D1 // pulled low by optocoupler when pump low relay energized
 #define STATUS_PUMPHIGH D0 // pulled low by optocoupler when pump high relay energized
-#define TEMPERATURE D3 // Dallas one wire temp sensor
-#define PRESSURE D4 // input dry contact for pressure switch used to detect water flow (pump is running)
+#define TEMPERATURE RX // Dallas one wire temp sensor
+#define PRESSURE D4 // input dry contact pulled low for pressure switch used to detect water flow (pump is running)
 // #define STATUS_HEAT2 // not enough GPIOs pulled low by optocoupler when heat 2 relay energized
 
 // relay outputs
@@ -26,7 +26,12 @@ float targetTemperature = 101.1; // default to 101 degrees as desired set temper
 const float tempCutIn = 1.1; // number of degrees to start / stop heating from
 const int statusTempInterval = 5000; // number of millis to wait before sending temp update on mqtt
 
-unsigned long int lastHeatMillis = 0;
+unsigned long int currentMillis = 0;
+unsigned long int lastStatusPressureMillis = 0;
+unsigned long int lastStatusPumpLowMillis = 0;
+unsigned long int lastStatusPumpHighMillis = 0;
+unsigned long int lastStatusHeat1Millis = 0;
+//unsigned long int lastHeatMillis = 0;
 bool statusPressure = 0; // is pressure detected or not. if true, pump is running. if false, pump is not running
 bool statusPumpLow = 0;
 bool statusPumpHigh = 0;
@@ -49,6 +54,7 @@ void IRAM_ATTR isrPressureDetected();
 void IRAM_ATTR isrPumpLow();
 void IRAM_ATTR isrPumpHigh();
 void IRAM_ATTR isrHeat1();
+void statusDebounceLoop();
 
 
 // DS18B20 Temperature Sensor

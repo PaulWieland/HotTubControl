@@ -36,6 +36,8 @@ void setup() {
 }
 
 void loop() {
+  currentMillis = millis();
+
   if (isConfigFileOk){
     // Bootsrap loop() with Wifi, MQTT and OTA functions
     bootstrapManager.bootstrapLoop(manageDisconnections, manageQueueSubscription, manageHardwareButton);
@@ -48,6 +50,7 @@ void loop() {
   }
 
   // read the temp sensor + actual relay status from optocoupler and broadcast on mqtt
+  statusDebounceLoop();
   statusUpdateLoop();
   
   // If the temperature too low, or too much time has passed since last cycle start the low speed pump
@@ -55,17 +58,10 @@ void loop() {
 
   // if pump is running, actual temp lower than target temp, turn heat on
   if(statusPressure && actualTemperature < targetTemperature){
-    // avoid rapid cycling the heater. wait at least 60 seconds since last turn on event before turning on again
-    if(millis() > (lastHeatMillis + 6000)){ 
+    if(digitalRead(HEAT1) == LOW){
       digitalWrite(HEAT1,HIGH);
       digitalWrite(HEAT2,HIGH);
-      lastHeatMillis = millis();
       Serial.println("Heat On");
-    //}else if(millis() - lastHeatMillis > 59500){
-    }else if(digitalRead(HEAT1) == LOW){
-      Serial.print("Heat request ignored, waiting");
-      Serial.print(millis() - lastHeatMillis);
-      Serial.println(" millis...");
     }
   }else if(digitalRead(HEAT1) == HIGH){
     digitalWrite(HEAT1,LOW);
@@ -123,6 +119,7 @@ void statusUpdateLoop(){
 }
 
 void IRAM_ATTR isrPressureDetected(){
+  lastStatusPressureMillis = currentMillis;
     // static unsigned long lastInterruptTime = 0;
     // unsigned long currentMillis = millis();
 
@@ -130,7 +127,7 @@ void IRAM_ATTR isrPressureDetected(){
     // if(currentMillis < 2000) return;
     
     // if(currentMillis - lastInterruptTime > 5000){
-      statusPressure = !digitalRead(PRESSURE);
+      // statusPressure = !digitalRead(PRESSURE);
     // }
 
   // lastInterruptTime = currentMillis;
@@ -138,17 +135,40 @@ void IRAM_ATTR isrPressureDetected(){
 
 // When the input pin changes, read the 
 void IRAM_ATTR isrPumpLow(){
-  statusPumpLow = !digitalRead(STATUS_PUMPLOW);
+  lastStatusPumpLowMillis = currentMillis;
+  // statusPumpLow = !digitalRead(STATUS_PUMPLOW);
 }
 
 void IRAM_ATTR isrPumpHigh(){
-  statusPumpHigh = !digitalRead(STATUS_PUMPHIGH);
+  lastStatusPumpHighMillis = currentMillis;
+  // statusPumpHigh = !digitalRead(STATUS_PUMPHIGH);
 }
 
 void IRAM_ATTR isrHeat1(){
-  statusHeat1 = !digitalRead(STATUS_HEAT1);
+  lastStatusHeat1Millis = currentMillis;
+//  statusHeat1 = !digitalRead(STATUS_HEAT1);
 }
 
+void statusDebounceLoop(){
+  if(currentMillis - lastStatusPressureMillis > 500){
+    statusPressure = !digitalRead(PRESSURE);
+  }else if(500 - (currentMillis - lastStatusPressureMillis) > 450){
+    Serial.print("deboucing pressure for: ");
+    Serial.println(10000 - (currentMillis - lastStatusPressureMillis));
+  }
+
+  if(currentMillis - lastStatusHeat1Millis > 500){
+    statusHeat1 = !digitalRead(STATUS_HEAT1);
+  }
+
+  if(currentMillis - lastStatusPumpLowMillis > 500){
+    statusPumpLow = !digitalRead(STATUS_PUMPLOW);
+  }
+
+  if(currentMillis - lastStatusPumpHighMillis > 500){
+    statusPumpHigh = !digitalRead(STATUS_PUMPHIGH);
+  }
+}
 
 void updateTemperatureLoop(){
   // static unsigned int lastMillis = 0;
