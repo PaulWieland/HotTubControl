@@ -14,8 +14,7 @@ void setup() {
   Serial.println(tubStatusTopic);
 
 
-  pinMode(HEAT1,OUTPUT);
-  pinMode(HEAT2,OUTPUT);
+  pinMode(HEAT,OUTPUT);
   pinMode(PUMPLOW,OUTPUT);
   pinMode(PUMPHIGH,OUTPUT);
   pinMode(TEMPERATURE,INPUT);
@@ -23,16 +22,13 @@ void setup() {
   pinMode(PRESSURE,INPUT_PULLUP);
   pinMode(STATUS_PUMPLOW,INPUT_PULLUP);
   pinMode(STATUS_PUMPHIGH,INPUT_PULLUP);
-  pinMode(STATUS_HEAT1,INPUT_PULLUP);
+  pinMode(STATUS_HEAT,INPUT_PULLUP);
+  pinMode(D4,OUTPUT);
 
   attachInterrupt(PRESSURE,isrPressureDetected,CHANGE);
-  attachInterrupt(STATUS_HEAT1,isrHeat1,CHANGE);
+  attachInterrupt(STATUS_HEAT,isrHeat,CHANGE);
   attachInterrupt(STATUS_PUMPLOW,isrPumpLow,CHANGE);
   attachInterrupt(STATUS_PUMPHIGH,isrPumpHigh,CHANGE);
-
-
-  digitalWrite(HEAT1,HIGH);
-  digitalWrite(HEAT2,LOW);
 }
 
 void loop() {
@@ -46,46 +42,125 @@ void loop() {
       setupComplete = true;
       // Broadcast that we are online
       bootstrapManager.publish(tubStatusTopic.c_str(), "\"online\"", false);
+
     }
   }
 
   // read the temp sensor + actual relay status from optocoupler and broadcast on mqtt
   statusDebounceLoop();
   statusUpdateLoop();
-  
-  // If the temperature too low, or too much time has passed since last cycle start the low speed pump
+  updateLED(); // D4 LED flashes when reconnecting, and stays on when connected
+
+  // Pressure detected, so update lastPressure time
+  if(statusPressure) lastPressureMillis = currentMillis;
+
+  // PUMP ON
+  // if last pump run more than target millis ago (run the pump every 1 hour for example)
+  // or if manually commanded to turn on when setting a new target temperature
+  if(currentMillis - lastPressureMillis > pumpInterval || newTargetTemp){
+    digitalWrite(PUMPLOW,HIGH);
+    lastPumpStartMillis = currentMillis;
+    newTargetTemp = false;
+    // statusPumpLow = true; // rely on optocoupler reading for now
+  }
+
+  // PUMP OFF
+  // if pump on AND was running for at least minRunTime AND heat off AND heat off for pumpPrePostRunDuration
+  if(digitalRead(PUMPLOW) == HIGH && currentMillis - lastPumpStartMillis > pumpMinRunTime && digitalRead(HEAT) == LOW && currentMillis - lastHeatOffMillis > pumpPrePostRunDuration){
+    digitalWrite(PUMPLOW,LOW);
+    // statusPumpLow = false; // rely on optocoupler reading for now
+  }
 
 
-  // if pump is running, actual temp lower than target temp, turn heat on
-  if(statusPressure && actualTemperature < targetTemperature){
-    if(digitalRead(HEAT1) == LOW){
-      digitalWrite(HEAT1,HIGH);
-      digitalWrite(HEAT2,HIGH);
-      Serial.println("Heat On");
+  // HEAT ON
+  // if pressure AND pump has been running for at least preRunMillis AND temp is lower than cut in target
+  if(statusPressure && currentMillis - lastPumpStartMillis > pumpPrePostRunDuration && actualTemperature < targetTemperature - tempCutOffset){
+    digitalWrite(HEAT,HIGH);
+  }
+
+  // HEAT OFF
+  // if no pressure OR actual is hotter than cut off target)
+  if(!statusPressure || actualTemperature > targetTemperature + tempCutOffset){
+    if(digitalRead(HEAT) == HIGH){
+      lastHeatOffMillis = currentMillis;
     }
-  }else if(digitalRead(HEAT1) == HIGH){
-    digitalWrite(HEAT1,LOW);
-    digitalWrite(HEAT2,LOW);
-    Serial.println("Heat Off");
+    digitalWrite(HEAT,LOW);
+  }
+
+}
+
+
+void updateLED(){
+  static unsigned int lastLED = 0;
+
+  if(WiFi.status() == WL_CONNECTED){
+    // turn led on to indicate wifi connected
+    digitalWrite(D4,LOW);
+    setupComplete = true;
+  }else{
+    if(currentMillis - lastLED < 500){
+      digitalWrite(D4,HIGH);
+    }else{
+      digitalWrite(D4,LOW);
+
+      if(currentMillis - lastLED > 1000){
+        lastLED = currentMillis;
+      }      
+    }
   }
 }
 
 void statusUpdateLoop(){
-  static long unsigned int lastTempMillis = 0;
+  static long unsigned int lastStatusMillis = 0;
   static bool lastStatusPressure = false;
   static bool lastStatusPumpLow = false;
   static bool lastStatusPumpHigh = false;
-  static bool lastStatusHeat1 = false;
-
-  if(millis() > (lastTempMillis + statusTempInterval) ){
+  static bool lastStatusHeat = false;
+  
+  if(millis() > (lastStatusMillis + statusInterval) ){
     updateTemperatureLoop();
 
-    lastTempMillis = millis();
-    Serial.print("Current temperature: ");
+    lastStatusMillis = millis();
+    Serial.println("Current Status:");
+    
+    Serial.print(" Temperature: ");
     Serial.println(actualTemperature);
-    Serial.print(" Target temperature: ");
+        
+    Serial.print(" Pressure: ");
+    Serial.println(statusPressure);
+    
+    Serial.print(" Pump Low|High: ");
+    Serial.print(statusPumpLow);
+    Serial.print("|");
+    Serial.println(statusPumpHigh);
+
+    Serial.print(" Heat: ");
+    Serial.println(statusHeat);
+    
+    Serial.println("Targets:");
+    Serial.print(" Temperature: ");
     Serial.println(targetTemperature);
+
+    Serial.print(" Heat: ");
+    Serial.println(digitalRead(HEAT));
+
+    Serial.print(" Pump Low|High: ");
+    Serial.print(digitalRead(PUMPLOW));
+    Serial.print("|");
+    Serial.println(digitalRead(PUMPHIGH));
+    Serial.println("===========");
+
     bootstrapManager.publish(String(tubStatusTopic + "/temperature").c_str(), String(actualTemperature).c_str(), false);
+    // bootstrapManager.publish(String(tubStatusTopic + "/pressure").c_str(), String(statusPressure).c_str(), false);
+    // bootstrapManager.publish(String(tubStatusTopic + "/pump_low").c_str(), String(statusPumpLow).c_str(), false);
+    // bootstrapManager.publish(String(tubStatusTopic + "/pump_high").c_str(), String(statusPumpHigh).c_str(), false);
+    // bootstrapManager.publish(String(tubStatusTopic + "/heat").c_str(), String(statusHeat).c_str(), false);
+
+    bootstrapManager.publish(String(tubTargetTopic + "/temperature").c_str(), String(targetTemperature).c_str(), false);
+    bootstrapManager.publish(String(tubTargetTopic + "/pump_low").c_str(), String(digitalRead(PUMPLOW)).c_str(), false);
+    bootstrapManager.publish(String(tubTargetTopic + "/pump_high").c_str(), String(digitalRead(PUMPHIGH)).c_str(), false);
+    bootstrapManager.publish(String(tubTargetTopic + "/heat").c_str(), String(digitalRead(HEAT)).c_str(), false);
+
   }
 
   if(lastStatusPressure != statusPressure){
@@ -106,47 +181,32 @@ void statusUpdateLoop(){
     bootstrapManager.publish(String(tubStatusTopic + "/pump_high").c_str(), String(statusPumpHigh).c_str(), false);
   }
 
-  if(lastStatusHeat1 != statusHeat1){
-    Serial.print("Heat1 Status Change to: ");
-    Serial.println(statusHeat1);
-    bootstrapManager.publish(String(tubStatusTopic + "/heat1").c_str(), String(statusHeat1).c_str(), false);
+  if(lastStatusHeat != statusHeat){
+    Serial.print("Heat Status Change to: ");
+    Serial.println(statusHeat);
+    bootstrapManager.publish(String(tubStatusTopic + "/heat").c_str(), String(statusHeat).c_str(), false);
   }
 
   lastStatusPressure = statusPressure;
   lastStatusPumpLow = statusPumpLow;
   lastStatusPumpHigh = statusPumpHigh;
-  lastStatusHeat1 = statusHeat1;
+  lastStatusHeat = statusHeat;
 }
 
 void IRAM_ATTR isrPressureDetected(){
   lastStatusPressureMillis = currentMillis;
-    // static unsigned long lastInterruptTime = 0;
-    // unsigned long currentMillis = millis();
-
-    // Prevent ISR during the first 2 seconds after reboot
-    // if(currentMillis < 2000) return;
-    
-    // if(currentMillis - lastInterruptTime > 5000){
-      // statusPressure = !digitalRead(PRESSURE);
-    // }
-
-  // lastInterruptTime = currentMillis;
 }
 
-// When the input pin changes, read the 
 void IRAM_ATTR isrPumpLow(){
   lastStatusPumpLowMillis = currentMillis;
-  // statusPumpLow = !digitalRead(STATUS_PUMPLOW);
 }
 
 void IRAM_ATTR isrPumpHigh(){
   lastStatusPumpHighMillis = currentMillis;
-  // statusPumpHigh = !digitalRead(STATUS_PUMPHIGH);
 }
 
-void IRAM_ATTR isrHeat1(){
-  lastStatusHeat1Millis = currentMillis;
-//  statusHeat1 = !digitalRead(STATUS_HEAT1);
+void IRAM_ATTR isrHeat(){
+  lastStatusHeatMillis = currentMillis;
 }
 
 void statusDebounceLoop(){
@@ -154,19 +214,19 @@ void statusDebounceLoop(){
     statusPressure = !digitalRead(PRESSURE);
   }else if(500 - (currentMillis - lastStatusPressureMillis) > 450){
     Serial.print("deboucing pressure for: ");
-    Serial.println(10000 - (currentMillis - lastStatusPressureMillis));
+    Serial.println(450 - (currentMillis - lastStatusPressureMillis));
   }
 
-  if(currentMillis - lastStatusHeat1Millis > 500){
-    statusHeat1 = !digitalRead(STATUS_HEAT1);
+  if(currentMillis - lastStatusHeatMillis > 500){
+    statusHeat = digitalRead(STATUS_HEAT);
   }
 
   if(currentMillis - lastStatusPumpLowMillis > 500){
-    statusPumpLow = !digitalRead(STATUS_PUMPLOW);
+    statusPumpLow = digitalRead(STATUS_PUMPLOW);
   }
 
   if(currentMillis - lastStatusPumpHighMillis > 500){
-    statusPumpHigh = !digitalRead(STATUS_PUMPHIGH);
+    statusPumpHigh = digitalRead(STATUS_PUMPHIGH);
   }
 }
 
@@ -180,6 +240,7 @@ void updateTemperatureLoop(){
     if(tempReading > -100){
       actualTemperature = tempReading;
     }else{
+      actualTemperature = 200; // prevent the heater from running
       Serial.println("Temperature sensor error!");
     }
     // lastMillis = currentMillis;
@@ -205,18 +266,26 @@ void callback(char *topic, byte *payload, unsigned int length){
     char rxVal[length];
     Serial.println("MQTT: set the temperature");
 
-    for(int i=0; i<length; i++){
+    for(unsigned int i=0; i<length; i++){
       rxVal[i] = payload[i];
     }
 
     targetTemperature = atof(rxVal);
+
+    // safety to avoid target temperature from being set too high or too low
+    if(targetTemperature > tempUpperLimit || targetTemperature < tempLowerLimit){
+      targetTemperature = 65;
+    }
+
     Serial.print("Set targetTemperature: ");
     Serial.println(targetTemperature);
+    newTargetTemp = true;
   }
 
 }
 void manageDisconnections(){
-
+  setupComplete = false;
+  digitalWrite(D4,HIGH); // turn LED off
 }
 void manageQueueSubscription(){
     bootstrapManager.subscribe(tubCommandTopic.c_str());
